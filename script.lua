@@ -1,5 +1,5 @@
--- Bug Fixes | Full Auto Pilot v5
--- Rango real de arma + caminar correcto + combos inteligentes + minimizar
+-- Bug Fixes | Full Auto Pilot v6
+-- Millones de combinaciones de combos + movimiento rápido al matar
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,11 +15,12 @@ local Settings = {
     Aim = true,
     LowGraphics = false,
 
-    -- Rango real de la katana (no atacar más lejos)
-    WeaponRange = 11.0,
+    WeaponRange = 11.2,
     OptimalRange = 9.0,
-    ChaseRange = 26,
-    AttackSpeed = 0.20,
+    ChaseRange = 30,
+    AttackSpeed = 0.17,
+    FastMoveSpeed = 1.8,   -- velocidad alta al matar / perseguir
+    NormalMoveSpeed = 1.25,
 }
 
 local State = {
@@ -27,32 +28,49 @@ local State = {
     lastParry = 0,
     lastDisplace = 0,
     lastCounter = 0,
-    comboIndex = 1,
+    lastTarget = nil,
     isCountering = false,
     minimized = false,
+    killBoostUntil = 0,     -- boost de velocidad después de matar
 }
 
--- Todas las posibilidades de combos
-local AllCombos = {
-    -- Combos básicos de presión
-    {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
-    {Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.F},
-    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q},
-    {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.Q},
-    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
-    {Enum.KeyCode.F, Enum.KeyCode.Q, Enum.KeyCode.E},
+-- Generador de muchísimas combinaciones
+local Keys = {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F}
+local function GenerateCombos()
+    local combos = {}
 
-    -- Combos más largos / agresivos
-    {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
-    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
-    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q},
+    -- Todas las permutaciones de 2, 3 y 4 hits
+    for _, a in ipairs(Keys) do
+        for _, b in ipairs(Keys) do
+            table.insert(combos, {a, b})
+            for _, c in ipairs(Keys) do
+                table.insert(combos, {a, b, c})
+                for _, d in ipairs(Keys) do
+                    table.insert(combos, {a, b, c, d})
+                end
+            end
+        end
+    end
 
-    -- Combos de contraataque (terminan con G = Displace)
-    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.G},
-    {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.G},
-    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.G},
-    {Enum.KeyCode.F, Enum.KeyCode.Q, Enum.KeyCode.G},
-}
+    -- Versiones con Displace (G) al final (contraataques)
+    local withG = {}
+    for _, combo in ipairs(combos) do
+        if #combo >= 2 then
+            local copy = table.clone(combo)
+            table.insert(copy, Enum.KeyCode.G)
+            table.insert(withG, copy)
+        end
+    end
+
+    -- Mezclar todo
+    for _, c in ipairs(withG) do
+        table.insert(combos, c)
+    end
+
+    return combos
+end
+
+local AllCombos = GenerateCombos() -- cientos de combinaciones posibles
 
 -- ==================== GUI ====================
 local ScreenGui = Instance.new("ScreenGui")
@@ -83,14 +101,13 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -90, 1, 0)
 Title.Position = UDim2.new(0, 12, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "Bug Fixes | Full Auto v5"
+Title.Text = "Bug Fixes | Full Auto v6"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = TitleBar
 
--- Botón Minimizar
 local MinBtn = Instance.new("TextButton")
 MinBtn.Size = UDim2.new(0, 34, 0, 34)
 MinBtn.Position = UDim2.new(1, -78, 0, 6)
@@ -139,14 +156,12 @@ local function MakeToggle(text, y, callback)
         btn.TextColor3 = on and Color3.fromRGB(50, 255, 130) or Color3.fromRGB(255, 70, 70)
         callback(on)
     end)
-    return btn
 end
 
 MakeToggle("FULL AUTO (Juega Solo)", 12, function(v)
     Settings.FullAuto = v
     if v then Settings.Aim = true end
 end)
-
 MakeToggle("Melee Aura", 62, function(v) Settings.MeleeAura = v end)
 MakeToggle("AIM Lock", 112, function(v) Settings.Aim = v end)
 MakeToggle("Low Graphics", 162, function(v)
@@ -173,14 +188,13 @@ local Info = Instance.new("TextLabel")
 Info.Size = UDim2.new(0.9, 0, 0, 55)
 Info.Position = UDim2.new(0.05, 0, 1, -65)
 Info.BackgroundTransparency = 1
-Info.Text = "Solo ataca dentro del rango del arma\nCaminar real + combos inteligentes\nBotón – para minimizar"
+Info.Text = "Cientos de combos posibles\nSe mueve rápido al matar\nSolo ataca en rango de arma"
 Info.TextColor3 = Color3.fromRGB(130, 140, 160)
 Info.Font = Enum.Font.Gotham
 Info.TextSize = 12
 Info.TextWrapped = true
 Info.Parent = Content
 
--- Minimizar / Restaurar
 MinBtn.MouseButton1Click:Connect(function()
     State.minimized = not State.minimized
     if State.minimized then
@@ -228,13 +242,13 @@ local function GetEnemies()
     return list
 end
 
--- ==================== MOVIMIENTO Y COMBATE ====================
+-- ==================== MOVIMIENTO + COMBATE ====================
 
 local function SoftFace(pos)
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
     local goal = CFrame.lookAt(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
-    root.CFrame = root.CFrame:Lerp(goal, 0.18)
+    root.CFrame = root.CFrame:Lerp(goal, 0.19)
 end
 
 local function WalkTo(pos, speed)
@@ -244,11 +258,11 @@ local function WalkTo(pos, speed)
     if not root or not hum then return end
 
     local dir = Vector3.new(pos.X - root.Position.X, 0, pos.Z - root.Position.Z)
-    if dir.Magnitude < 1.0 then
+    if dir.Magnitude < 1.1 then
         hum:Move(Vector3.zero, false)
         return
     end
-    hum:Move(dir.Unit * (speed or 1.25), false)
+    hum:Move(dir.Unit * speed, false)
 end
 
 local function Strafe(targetPos)
@@ -259,25 +273,25 @@ local function Strafe(targetPos)
 
     local toEnemy = (Vector3.new(targetPos.X, root.Position.Y, targetPos.Z) - root.Position).Unit
     local side = Vector3.new(-toEnemy.Z, 0, toEnemy.X)
-    if math.floor(tick() * 0.7) % 2 == 0 then side = -side end
-    hum:Move((toEnemy * -0.3 + side * 0.95).Unit, false)
+    if math.floor(tick() * 0.8) % 2 == 0 then side = -side end
+    hum:Move((toEnemy * -0.25 + side * 1.0).Unit * 1.1, false)
 end
 
 local function Press(key, t)
     pcall(function()
         VIM:SendKeyEvent(true, key, false, game)
-        task.wait(t or 0.025)
+        task.wait(t or 0.022)
         VIM:SendKeyEvent(false, key, false, game)
     end)
 end
 
-local function DoCombo(useCounter)
+local function DoRandomCombo(isCounter)
     if tick() - State.lastAttack < Settings.AttackSpeed then return end
     State.lastAttack = tick()
 
     local combo
-    if useCounter then
-        -- Elegir solo combos de contra (los que tienen G)
+    if isCounter then
+        -- Buscar combos que terminen en G
         local counters = {}
         for _, c in ipairs(AllCombos) do
             if c[#c] == Enum.KeyCode.G then
@@ -286,26 +300,25 @@ local function DoCombo(useCounter)
         end
         combo = counters[math.random(1, #counters)]
     else
-        combo = AllCombos[State.comboIndex]
-        State.comboIndex = State.comboIndex % #AllCombos + 1
+        combo = AllCombos[math.random(1, #AllCombos)]
     end
 
     for i, key in ipairs(combo) do
-        Press(key, 0.024)
-        if i < #combo then task.wait(0.036) end
+        Press(key, 0.021)
+        if i < #combo then task.wait(0.032) end
     end
 end
 
 local function DoParry()
-    if tick() - State.lastParry < 0.28 then return end
+    if tick() - State.lastParry < 0.26 then return end
     State.lastParry = tick()
 
     pcall(function()
         VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
-        task.wait(0.02)
+        task.wait(0.018)
         VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
     end)
-    Press(Enum.KeyCode.R, 0.02)
+    Press(Enum.KeyCode.R, 0.018)
 
     State.isCountering = true
     State.lastCounter = tick()
@@ -313,13 +326,13 @@ end
 
 local function ProcessCounter()
     if not State.isCountering then return end
-    if tick() - State.lastCounter > 0.48 then
+    if tick() - State.lastCounter > 0.45 then
         State.isCountering = false
         return
     end
     State.isCountering = false
     State.lastAttack = 0
-    DoCombo(true) -- contraataque
+    DoRandomCombo(true)
 end
 
 -- ==================== FULL AUTO ====================
@@ -335,57 +348,65 @@ RunService.Heartbeat:Connect(function()
     local enemies = GetEnemies()
     if #enemies == 0 then
         myHum:Move(Vector3.zero, false)
+        State.lastTarget = nil
         return
     end
 
     local target = enemies[1]
     local dist = target.dist
-    local group = 0
-    for _, e in ipairs(enemies) do
-        if e.dist <= 15 then group += 1 end
+
+    -- Detectar si matamos al anterior → boost de velocidad
+    if State.lastTarget and State.lastTarget ~= target.player then
+        State.killBoostUntil = tick() + 2.2 -- 2.2 segundos de movimiento rápido
+    end
+    State.lastTarget = target.player
+
+    local speed = Settings.NormalMoveSpeed
+    if tick() < State.killBoostUntil then
+        speed = Settings.FastMoveSpeed -- se mueve más rápido después de matar
     end
 
     SoftFace(target.root.Position)
 
-    -- Caminar cuando está lejos
-    if dist > Settings.WeaponRange + 1.5 and dist < Settings.ChaseRange then
-        WalkTo(target.root.Position, 1.35)
-    elseif dist < 7.2 then
-        -- Muy cerca → strafe para no quedar pegado
+    -- Movimiento
+    if dist > Settings.WeaponRange + 1.2 and dist < Settings.ChaseRange then
+        WalkTo(target.root.Position, speed)
+    elseif dist < 7.0 then
         Strafe(target.root.Position)
-    elseif dist > Settings.OptimalRange + 1.8 and dist <= Settings.WeaponRange + 1 then
-        WalkTo(target.root.Position, 0.85)
+    elseif dist > Settings.OptimalRange + 1.5 and dist <= Settings.WeaponRange + 0.8 then
+        WalkTo(target.root.Position, speed * 0.75)
     else
         myHum:Move(Vector3.zero, false)
     end
 
-    -- SOLO atacar si está dentro del rango real del arma
+    -- Solo atacar en rango real del arma
     if dist <= Settings.WeaponRange then
-        if group >= 2 then
-            DoCombo(false)
+        local group = 0
+        for _, e in ipairs(enemies) do
+            if e.dist <= 14.5 then group += 1 end
+        end
+
+        DoRandomCombo(false)
+
+        if dist <= 10.8 or group >= 2 then
             DoParry()
             ProcessCounter()
-            if tick() - State.lastDisplace > 1.2 then
-                State.lastDisplace = tick()
-                Press(Enum.KeyCode.G, 0.03)
-            end
-        else
-            DoCombo(false)
-            if dist <= 10.5 then
-                DoParry()
-                ProcessCounter()
-            end
+        end
+
+        if group >= 2 and tick() - State.lastDisplace > 1.0 then
+            State.lastDisplace = tick()
+            Press(Enum.KeyCode.G, 0.025)
         end
     end
 end)
 
--- Melee Aura (solo en rango)
+-- Melee Aura
 RunService.Heartbeat:Connect(function()
     if Settings.FullAuto or not Settings.MeleeAura then return end
     local enemies = GetEnemies()
     if #enemies > 0 and enemies[1].dist <= Settings.WeaponRange then
         SoftFace(enemies[1].root.Position)
-        DoCombo(false)
+        DoRandomCombo(false)
     end
 end)
 
@@ -400,8 +421,8 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-print("✅ Bug Fixes Full Auto v5")
-print("• Solo ataca dentro del rango del arma")
-print("• Caminar real en Full Auto")
-print("• Todas las combinaciones de combos")
-print("• Botón – para minimizar")
+print("✅ Bug Fixes Full Auto v6")
+print("• Cientos de combinaciones de combos generadas")
+print("• Movimiento rápido al matar (boost 2.2s)")
+print("• Solo ataca en rango de arma")
+print("• Minimizar con el botón –")
