@@ -1,6 +1,5 @@
--- Bug Fixes | Mobile Optimized
--- Melee Aura + Smart Auto Parry (Sword Position) + AIM + Low Graphics
--- Compatible with Delta Mobile
+-- Bug Fixes | Mobile OP Auto Combat
+-- No bloquea movimiento + Auto Combate para grupos
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -12,54 +11,58 @@ local VIM = game:GetService("VirtualInputManager")
 
 local Settings = {
     MeleeAura = false,
-    MeleeRange = 11,
+    AutoCombat = false,      -- NUEVO: modo auto combate completo
     AutoParry = false,
     Aim = false,
-    AimSmooth = 0.18,
     LowGraphics = false,
-    FaceEnemy = true -- Gira el personaje hacia el enemigo para bloquear mejor
+
+    MeleeRange = 13,
+    CombatRange = 18,        -- rango para perseguir
+    AttackCooldown = 0.28,
+    FaceSpeed = 0.12,        -- muy suave para no romper movimiento
 }
 
--- Detectar si es mobile
-local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local isMobile = UserInputService.TouchEnabled
+local lastAttack = 0
+local lastParry = 0
+local currentTarget = nil
 
--- GUI Mobile Friendly
+-- ==================== GUI ====================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BugFixesDelta"
+ScreenGui.Name = "BugFixesOP"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = game:GetService("CoreGui")
 
 local Frame = Instance.new("Frame")
-Frame.Size = isMobile and UDim2.new(0, 300, 0, 340) or UDim2.new(0, 270, 0, 310)
-Frame.Position = UDim2.new(0.5, isMobile and -150 or -135, 0.25, 0)
-Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+Frame.Size = UDim2.new(0, 310, 0, 380)
+Frame.Position = UDim2.new(0.5, -155, 0.2, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
 Frame.BorderSizePixel = 0
 Frame.Active = true
 Frame.Draggable = true
 Frame.Parent = ScreenGui
-
 Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 42)
-Title.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
-Title.Text = "Bug Fixes | Mobile"
+Title.Size = UDim2.new(1, 0, 0, 44)
+Title.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+Title.Text = "Bug Fixes | OP Mobile"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = isMobile and 16 or 15
+Title.TextSize = 16
 Title.Parent = Frame
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 12)
 
-local function MakeToggle(text, yPos, callback)
+local function MakeToggle(text, y, callback)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.9, 0, 0, isMobile and 42 or 34)
-    btn.Position = UDim2.new(0.05, 0, 0, yPos)
-    btn.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
+    btn.Size = UDim2.new(0.9, 0, 0, 40)
+    btn.Position = UDim2.new(0.05, 0, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
     btn.Text = text .. ": OFF"
-    btn.TextColor3 = Color3.fromRGB(255, 85, 85)
+    btn.TextColor3 = Color3.fromRGB(255, 80, 80)
     btn.Font = Enum.Font.GothamMedium
-    btn.TextSize = isMobile and 15 or 13
+    btn.TextSize = 14
     btn.Parent = Frame
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
@@ -67,26 +70,23 @@ local function MakeToggle(text, yPos, callback)
     btn.MouseButton1Click:Connect(function()
         on = not on
         btn.Text = text .. (on and ": ON" or ": OFF")
-        btn.TextColor3 = on and Color3.fromRGB(80, 255, 120) or Color3.fromRGB(255, 85, 85)
+        btn.TextColor3 = on and Color3.fromRGB(70, 255, 120) or Color3.fromRGB(255, 80, 80)
         callback(on)
     end)
 end
 
 MakeToggle("Melee Aura", 55, function(v) Settings.MeleeAura = v end)
-MakeToggle("Smart Auto Parry", 105, function(v) Settings.AutoParry = v end)
-MakeToggle("AIM Lock", 155, function(v) Settings.Aim = v end)
-MakeToggle("Low Graphics", 205, function(v)
+MakeToggle("AUTO COMBATE (OP)", 105, function(v) Settings.AutoCombat = v end)
+MakeToggle("Smart Auto Parry", 155, function(v) Settings.AutoParry = v end)
+MakeToggle("AIM Lock", 205, function(v) Settings.Aim = v end)
+MakeToggle("Low Graphics", 255, function(v)
     Settings.LowGraphics = v
     if v then
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-        end)
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 9e9
-        for _, effect in pairs(Lighting:GetChildren()) do
-            if effect:IsA("PostEffect") then
-                effect.Enabled = false
-            end
+        for _, e in pairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") then e.Enabled = false end
         end
         for _, obj in pairs(workspace:GetDescendants()) do
             if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") then
@@ -94,179 +94,201 @@ MakeToggle("Low Graphics", 205, function(v)
             end
         end
     else
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
-        end)
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic end)
         Lighting.GlobalShadows = true
     end
 end)
 
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Size = UDim2.new(0, 32, 0, 32)
-CloseBtn.Position = UDim2.new(1, -38, 0, 5)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-CloseBtn.Text = "X"
-CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.TextSize = 14
-CloseBtn.Parent = Frame
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
-CloseBtn.MouseButton1Click:Connect(function()
-    ScreenGui:Destroy()
-end)
+local Close = Instance.new("TextButton")
+Close.Size = UDim2.new(0, 34, 0, 34)
+Close.Position = UDim2.new(1, -40, 0, 5)
+Close.BackgroundColor3 = Color3.fromRGB(180, 35, 35)
+Close.Text = "X"
+Close.TextColor3 = Color3.fromRGB(255,255,255)
+Close.Font = Enum.Font.GothamBold
+Close.TextSize = 15
+Close.Parent = Frame
+Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 8)
+Close.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
--- Info text for mobile
 local Info = Instance.new("TextLabel")
-Info.Size = UDim2.new(0.9, 0, 0, 30)
-Info.Position = UDim2.new(0.05, 0, 1, -35)
+Info.Size = UDim2.new(0.9, 0, 0, 40)
+Info.Position = UDim2.new(0.05, 0, 1, -45)
 Info.BackgroundTransparency = 1
-Info.Text = isMobile and "Mobile Mode • Puedes moverte libremente" or "PC Mode"
-Info.TextColor3 = Color3.fromRGB(140, 140, 160)
+Info.Text = "Auto Combate = se mueve solo + ataca grupos\nNo bloquea tu joystick"
+Info.TextColor3 = Color3.fromRGB(130, 130, 150)
 Info.Font = Enum.Font.Gotham
 Info.TextSize = 12
+Info.TextWrapped = true
 Info.Parent = Frame
 
--- Closest player
-local function GetClosest(range)
-    local closest, shortest = nil, range or 999
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return nil, 999 end
+-- ==================== FUNCIONES ====================
+
+local function GetAlivePlayers()
+    local list = {}
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return list end
 
     for _, plr in pairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and plr.Character then
             local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
             local hum = plr.Character:FindFirstChildOfClass("Humanoid")
             if hrp and hum and hum.Health > 0 then
-                local d = (root.Position - hrp.Position).Magnitude
-                if d < shortest then
-                    shortest = d
-                    closest = plr
-                end
+                local dist = (myRoot.Position - hrp.Position).Magnitude
+                table.insert(list, {player = plr, root = hrp, hum = hum, dist = dist})
             end
         end
     end
-    return closest, shortest
+    table.sort(list, function(a, b) return a.dist < b.dist end)
+    return list
 end
 
--- Get enemy sword / tool position for smarter parry
-local function GetEnemySwordPos(target)
-    if not target or not target.Character then return nil end
-    local char = target.Character
-    -- Buscar herramienta equipada o partes de la espada
-    for _, obj in pairs(char:GetDescendants()) do
-        if obj:IsA("Tool") and obj.Parent == char then
-            local handle = obj:FindFirstChild("Handle")
-            if handle then return handle.Position end
-        end
-        if obj.Name:lower():find("sword") or obj.Name:lower():find("blade") or obj.Name:lower():find("katana") then
-            if obj:IsA("BasePart") then
-                return obj.Position
-            end
-        end
+local function SoftFace(targetPos)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local flat = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+    local goal = CFrame.lookAt(root.Position, flat)
+    -- Muy suave → no rompe el movimiento del joystick
+    root.CFrame = root.CFrame:Lerp(goal, Settings.FaceSpeed)
+end
+
+local function DoAttack()
+    if tick() - lastAttack < Settings.AttackCooldown then return end
+    lastAttack = tick()
+
+    -- Ciclo de cortes (E Q F)
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.025)
+        VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    task.wait(0.05)
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
+        task.wait(0.025)
+        VIM:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
+    end)
+    task.wait(0.05)
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+        task.wait(0.025)
+        VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+    end)
+end
+
+local function DoParry()
+    if tick() - lastParry < 0.32 then return end
+    lastParry = tick()
+
+    pcall(function()
+        VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
+        task.wait(0.02)
+        VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+    end)
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game)
+        task.wait(0.02)
+        VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game)
+    end)
+end
+
+-- ==================== LOOPS ====================
+
+-- Melee Aura simple (solo ataca si están cerca, no mueve)
+RunService.Heartbeat:Connect(function()
+    if not Settings.MeleeAura or Settings.AutoCombat then return end
+
+    local list = GetAlivePlayers()
+    if #list == 0 then return end
+
+    local nearest = list[1]
+    if nearest.dist <= Settings.MeleeRange then
+        SoftFace(nearest.root.Position)
+        DoAttack()
     end
-    -- Fallback a la mano derecha o torso
-    local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-    if rightHand then return rightHand.Position end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    return root and root.Position or nil
-end
+end)
 
--- Face enemy smoothly without locking movement completely
-local function FaceTarget(targetPos)
+-- AUTO COMBATE OP (se mueve + ataca + parry + multi target)
+RunService.Heartbeat:Connect(function()
+    if not Settings.AutoCombat then return end
+
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not root or not hum then return end
+    if not root or not hum or hum.Health <= 0 then return end
 
-    local lookAt = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
-    local goal = CFrame.lookAt(root.Position, lookAt)
-    -- Solo rotar un poco, no forzar completamente para no romper movimiento mobile
-    root.CFrame = root.CFrame:Lerp(goal, 0.15)
-end
+    local list = GetAlivePlayers()
+    if #list == 0 then return end
 
--- Melee Aura (funciona en mobile)
-local lastAttack = 0
-RunService.Heartbeat:Connect(function()
-    if not Settings.MeleeAura then return end
-    if tick() - lastAttack < 0.35 then return end -- cooldown para no spamear
+    -- Prioriza el más cercano
+    local target = list[1]
+    currentTarget = target.player
 
-    local target, dist = GetClosest(Settings.MeleeRange)
-    if target and dist <= Settings.MeleeRange then
-        lastAttack = tick()
-        -- En mobile intentamos varias formas de input
-        pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.03)
-            VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
-        task.wait(0.06)
-        pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
-            task.wait(0.03)
-            VIM:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
-        end)
-        task.wait(0.06)
-        pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
-            task.wait(0.03)
-            VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
-        end)
+    -- 1. Mirar al enemigo (suave)
+    SoftFace(target.root.Position)
+
+    -- 2. Moverse hacia él si está lejos (usando Humanoid para no romper controles)
+    if target.dist > 9 and target.dist < Settings.CombatRange then
+        -- Camina hacia el objetivo sin cancelar el joystick del usuario
+        local direction = (target.root.Position - root.Position).Unit
+        hum:Move(Vector3.new(direction.X, 0, direction.Z), false)
+    elseif target.dist <= 9 then
+        -- Si está muy cerca, deja de empujar y solo ataca
+        hum:Move(Vector3.zero, false)
     end
-end)
 
--- Smart Auto Parry (analiza posición de la espada del enemigo)
-local lastParry = 0
-RunService.Heartbeat:Connect(function()
-    if not Settings.AutoParry then return end
-    if tick() - lastParry < 0.28 then return end
+    -- 3. Atacar siempre que esté en rango
+    if target.dist <= Settings.MeleeRange + 2 then
+        DoAttack()
+    end
 
-    local target, dist = GetClosest(13)
-    if not target or dist > 12 then return end
+    -- 4. Auto Parry si hay alguien muy cerca (grupo)
+    if Settings.AutoParry or target.dist <= 11 then
+        DoParry()
+    end
 
-    local swordPos = GetEnemySwordPos(target)
-    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-
-    -- Si hay espada cerca, girar hacia ella para bloquear
-    if swordPos and (swordPos - myRoot.Position).Magnitude < 14 then
-        lastParry = tick()
-
-        -- 1. Girar el personaje hacia la espada del enemigo (esto ayuda mucho a bloquear)
-        if Settings.FaceEnemy then
-            FaceTarget(swordPos)
+    -- 5. Si hay varios enemigos cerca, atacar más agresivo
+    local nearbyCount = 0
+    for _, t in ipairs(list) do
+        if t.dist <= 14 then
+            nearbyCount += 1
         end
-
-        -- 2. Intentar input de bloqueo (funciona mejor en PC, en mobile depende del executor)
-        pcall(function()
-            -- Right click / bloqueo
-            VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
-            task.wait(0.02)
-            VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
-        end)
-
-        -- 3. Cambiar stance (R) que en este juego ayuda a defender
-        pcall(function()
-            VIM:SendKeyEvent(true, Enum.KeyCode.R, false, game)
-            task.wait(0.025)
-            VIM:SendKeyEvent(false, Enum.KeyCode.R, false, game)
-        end)
+    end
+    if nearbyCount >= 2 then
+        -- Modo grupo: ataca más rápido
+        Settings.AttackCooldown = 0.18
+        DoAttack()
+        DoParry()
+    else
+        Settings.AttackCooldown = 0.28
     end
 end)
 
--- AIM (suave, no bloquea movimiento)
+-- Auto Parry standalone
+RunService.Heartbeat:Connect(function()
+    if not Settings.AutoParry or Settings.AutoCombat then return end
+
+    local list = GetAlivePlayers()
+    if #list == 0 then return end
+    if list[1].dist <= 12 then
+        SoftFace(list[1].root.Position)
+        DoParry()
+    end
+end)
+
+-- AIM
 RunService.RenderStepped:Connect(function()
     if not Settings.Aim then return end
-    local target = GetClosest(50)
-    if target and target.Character then
-        local part = target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
-        if part then
-            local goal = CFrame.lookAt(Camera.CFrame.Position, part.Position)
-            Camera.CFrame = Camera.CFrame:Lerp(goal, Settings.AimSmooth)
-        end
+    local list = GetAlivePlayers()
+    if #list == 0 then return end
+    local part = list[1].player.Character:FindFirstChild("Head") or list[1].root
+    if part then
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, part.Position), 0.16)
     end
 end)
 
-print("✅ Bug Fixes Mobile Script loaded")
-print("• Melee Aura + Smart Auto Parry (analiza espada)")
-print("• Puedes moverte libremente en mobile")
+print("✅ Bug Fixes OP Mobile cargado")
+print("• Auto Combate = se mueve solo + ataca grupos")
+print("• Ya no debería bloquear tu movimiento")
