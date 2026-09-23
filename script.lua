@@ -1,5 +1,5 @@
--- Bug Fixes | Full Auto Pilot v4
--- Detecta perfecto + juega solo + lógica de combos avanzada (casi nunca pierde)
+-- Bug Fixes | Full Auto Pilot v5
+-- Rango real de arma + caminar correcto + combos inteligentes + minimizar
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,55 +10,48 @@ local Camera = workspace.CurrentCamera
 local VIM = game:GetService("VirtualInputManager")
 
 local Settings = {
-    FullAuto = false,          -- Juega completamente solo
+    FullAuto = false,
     MeleeAura = false,
-    AutoParry = true,          -- Siempre activo en Full Auto
     Aim = true,
     LowGraphics = false,
 
-    OptimalRange = 9.5,        -- Distancia ideal de pelea
-    ChaseRange = 28,
-    AttackSpeed = 0.19,
+    -- Rango real de la katana (no atacar más lejos)
+    WeaponRange = 11.0,
+    OptimalRange = 9.0,
+    ChaseRange = 26,
+    AttackSpeed = 0.20,
 }
 
--- Estado interno del cerebro de combate
 local State = {
     lastAttack = 0,
     lastParry = 0,
     lastDisplace = 0,
     lastCounter = 0,
-    comboStep = 1,
-    currentCombo = 1,
+    comboIndex = 1,
     isCountering = false,
-    target = nil,
-    mode = "idle" -- idle, chase, fight, group, counter
+    minimized = false,
 }
 
--- Combos avanzados según situación
-local Combos = {
-    -- Combo normal (presión)
-    normal = {
-        {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
-        {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q},
-        {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
-    },
-    -- Combo agresivo (cuando el enemigo está cerca o hay varios)
-    aggressive = {
-        {Enum.KeyCode.F, Enum.KeyCode.F, Enum.KeyCode.E},
-        {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.Q},
-        {Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.F},
-    },
-    -- Contraataque después de parry
-    counter = {
-        {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.G},
-        {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.G},
-        {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.G},
-    },
-    -- Combo de grupo (máxima presión)
-    group = {
-        {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
-        {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
-    }
+-- Todas las posibilidades de combos
+local AllCombos = {
+    -- Combos básicos de presión
+    {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
+    {Enum.KeyCode.Q, Enum.KeyCode.E, Enum.KeyCode.F},
+    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q},
+    {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.Q},
+    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
+    {Enum.KeyCode.F, Enum.KeyCode.Q, Enum.KeyCode.E},
+
+    -- Combos más largos / agresivos
+    {Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E},
+    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q, Enum.KeyCode.F},
+    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.Q},
+
+    -- Combos de contraataque (terminan con G = Displace)
+    {Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.G},
+    {Enum.KeyCode.E, Enum.KeyCode.F, Enum.KeyCode.G},
+    {Enum.KeyCode.Q, Enum.KeyCode.F, Enum.KeyCode.E, Enum.KeyCode.G},
+    {Enum.KeyCode.F, Enum.KeyCode.Q, Enum.KeyCode.G},
 }
 
 -- ==================== GUI ====================
@@ -68,36 +61,75 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = game:GetService("CoreGui")
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 330, 0, 360)
-Frame.Position = UDim2.new(0.5, -165, 0.15, 0)
-Frame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
-Frame.BorderSizePixel = 0
-Frame.Active = true
-Frame.Draggable = true
-Frame.Parent = ScreenGui
-Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 14)
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "Main"
+MainFrame.Size = UDim2.new(0, 330, 0, 370)
+MainFrame.Position = UDim2.new(0.5, -165, 0.14, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 14)
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 46)
+TitleBar.BackgroundColor3 = Color3.fromRGB(16, 16, 24)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 14)
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 46)
-Title.BackgroundColor3 = Color3.fromRGB(18, 18, 26)
-Title.Text = "Bug Fixes | Full Auto Pilot"
+Title.Size = UDim2.new(1, -90, 1, 0)
+Title.Position = UDim2.new(0, 12, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "Bug Fixes | Full Auto v5"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 16
-Title.Parent = Frame
-Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 14)
+Title.TextSize = 15
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TitleBar
+
+-- Botón Minimizar
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.new(0, 34, 0, 34)
+MinBtn.Position = UDim2.new(1, -78, 0, 6)
+MinBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+MinBtn.Text = "–"
+MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 20
+MinBtn.Parent = TitleBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 8)
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 34, 0, 34)
+CloseBtn.Position = UDim2.new(1, -40, 0, 6)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(160, 30, 30)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 15
+CloseBtn.Parent = TitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, 0, 1, -46)
+Content.Position = UDim2.new(0, 0, 0, 46)
+Content.BackgroundTransparency = 1
+Content.Parent = MainFrame
 
 local function MakeToggle(text, y, callback)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.9, 0, 0, 42)
+    btn.Size = UDim2.new(0.9, 0, 0, 40)
     btn.Position = UDim2.new(0.05, 0, 0, y)
     btn.BackgroundColor3 = Color3.fromRGB(26, 26, 36)
     btn.Text = text .. ": OFF"
     btn.TextColor3 = Color3.fromRGB(255, 70, 70)
     btn.Font = Enum.Font.GothamMedium
     btn.TextSize = 14
-    btn.Parent = Frame
+    btn.Parent = Content
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
 
     local on = false
@@ -107,19 +139,17 @@ local function MakeToggle(text, y, callback)
         btn.TextColor3 = on and Color3.fromRGB(50, 255, 130) or Color3.fromRGB(255, 70, 70)
         callback(on)
     end)
+    return btn
 end
 
-MakeToggle("FULL AUTO (Juega Solo)", 55, function(v)
+MakeToggle("FULL AUTO (Juega Solo)", 12, function(v)
     Settings.FullAuto = v
-    if v then
-        Settings.AutoParry = true
-        Settings.Aim = true
-    end
+    if v then Settings.Aim = true end
 end)
 
-MakeToggle("Melee Aura", 108, function(v) Settings.MeleeAura = v end)
-MakeToggle("AIM Lock", 161, function(v) Settings.Aim = v end)
-MakeToggle("Low Graphics", 214, function(v)
+MakeToggle("Melee Aura", 62, function(v) Settings.MeleeAura = v end)
+MakeToggle("AIM Lock", 112, function(v) Settings.Aim = v end)
+MakeToggle("Low Graphics", 162, function(v)
     Settings.LowGraphics = v
     if v then
         pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
@@ -139,97 +169,86 @@ MakeToggle("Low Graphics", 214, function(v)
     end
 end)
 
-local Close = Instance.new("TextButton")
-Close.Size = UDim2.new(0, 36, 0, 36)
-Close.Position = UDim2.new(1, -42, 0, 5)
-Close.BackgroundColor3 = Color3.fromRGB(160, 25, 25)
-Close.Text = "X"
-Close.TextColor3 = Color3.fromRGB(255,255,255)
-Close.Font = Enum.Font.GothamBold
-Close.TextSize = 16
-Close.Parent = Frame
-Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 9)
-Close.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+local Info = Instance.new("TextLabel")
+Info.Size = UDim2.new(0.9, 0, 0, 55)
+Info.Position = UDim2.new(0.05, 0, 1, -65)
+Info.BackgroundTransparency = 1
+Info.Text = "Solo ataca dentro del rango del arma\nCaminar real + combos inteligentes\nBotón – para minimizar"
+Info.TextColor3 = Color3.fromRGB(130, 140, 160)
+Info.Font = Enum.Font.Gotham
+Info.TextSize = 12
+Info.TextWrapped = true
+Info.Parent = Content
 
-local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(0.9, 0, 0, 50)
-Status.Position = UDim2.new(0.05, 0, 1, -58)
-Status.BackgroundTransparency = 1
-Status.Text = "FULL AUTO = Detecta + se mueve + pelea solo\nLógica de combos avanzada activada"
-Status.TextColor3 = Color3.fromRGB(130, 140, 160)
-Status.Font = Enum.Font.Gotham
-Status.TextSize = 12
-Status.TextWrapped = true
-Status.Parent = Frame
+-- Minimizar / Restaurar
+MinBtn.MouseButton1Click:Connect(function()
+    State.minimized = not State.minimized
+    if State.minimized then
+        Content.Visible = false
+        MainFrame.Size = UDim2.new(0, 330, 0, 46)
+        MinBtn.Text = "+"
+    else
+        Content.Visible = true
+        MainFrame.Size = UDim2.new(0, 330, 0, 370)
+        MinBtn.Text = "–"
+    end
+end)
 
--- ==================== DETECCIÓN SÓLIDA ====================
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
 
-local function GetValidEnemies()
+-- ==================== DETECCIÓN ====================
+
+local function GetEnemies()
     local list = {}
     local myChar = LocalPlayer.Character
     if not myChar then return list end
-
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
     local myHum = myChar:FindFirstChildOfClass("Humanoid")
     if not myRoot or not myHum or myHum.Health <= 0 then return list end
 
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local char = plr.Character
-            if char then
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hrp and hum and hum.Health > 0 then
-                    -- Evitar jugadores que estén en estado raro
-                    local state = hum:GetState()
-                    if state ~= Enum.HumanoidStateType.Dead and state ~= Enum.HumanoidStateType.Physics then
-                        local dist = (myRoot.Position - hrp.Position).Magnitude
-                        table.insert(list, {
-                            player = plr,
-                            root = hrp,
-                            hum = hum,
-                            char = char,
-                            dist = dist
-                        })
-                    end
-                end
+        if plr ~= LocalPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 then
+                local dist = (myRoot.Position - hrp.Position).Magnitude
+                table.insert(list, {
+                    player = plr,
+                    root = hrp,
+                    hum = hum,
+                    char = plr.Character,
+                    dist = dist
+                })
             end
         end
     end
-
     table.sort(list, function(a, b) return a.dist < b.dist end)
     return list
 end
 
--- ==================== UTILIDADES DE COMBATE ====================
-
-local function Press(key, hold)
-    pcall(function()
-        VIM:SendKeyEvent(true, key, false, game)
-        task.wait(hold or 0.028)
-        VIM:SendKeyEvent(false, key, false, game)
-    end)
-end
+-- ==================== MOVIMIENTO Y COMBATE ====================
 
 local function SoftFace(pos)
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
     local goal = CFrame.lookAt(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
-    root.CFrame = root.CFrame:Lerp(goal, 0.20)
+    root.CFrame = root.CFrame:Lerp(goal, 0.18)
 end
 
-local function MoveToward(pos, intensity)
+local function WalkTo(pos, speed)
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not root or not hum then return end
 
     local dir = Vector3.new(pos.X - root.Position.X, 0, pos.Z - root.Position.Z)
-    if dir.Magnitude < 0.8 then
+    if dir.Magnitude < 1.0 then
         hum:Move(Vector3.zero, false)
         return
     end
-    hum:Move(dir.Unit * (intensity or 1.3), false)
+    hum:Move(dir.Unit * (speed or 1.25), false)
 end
 
 local function Strafe(targetPos)
@@ -240,58 +259,70 @@ local function Strafe(targetPos)
 
     local toEnemy = (Vector3.new(targetPos.X, root.Position.Y, targetPos.Z) - root.Position).Unit
     local side = Vector3.new(-toEnemy.Z, 0, toEnemy.X)
-    -- Alterna lado para no ser predecible
-    if tick() % 2 < 1 then side = -side end
-    local move = (toEnemy * -0.35 + side * 0.9).Unit
-    hum:Move(move, false)
+    if math.floor(tick() * 0.7) % 2 == 0 then side = -side end
+    hum:Move((toEnemy * -0.3 + side * 0.95).Unit, false)
 end
 
--- ==================== LÓGICA DE COMBOS ====================
+local function Press(key, t)
+    pcall(function()
+        VIM:SendKeyEvent(true, key, false, game)
+        task.wait(t or 0.025)
+        VIM:SendKeyEvent(false, key, false, game)
+    end)
+end
 
-local function ExecuteCombo(comboType)
+local function DoCombo(useCounter)
     if tick() - State.lastAttack < Settings.AttackSpeed then return end
     State.lastAttack = tick()
 
-    local pool = Combos[comboType] or Combos.normal
-    local combo = pool[State.currentCombo]
-    State.currentCombo = State.currentCombo % #pool + 1
+    local combo
+    if useCounter then
+        -- Elegir solo combos de contra (los que tienen G)
+        local counters = {}
+        for _, c in ipairs(AllCombos) do
+            if c[#c] == Enum.KeyCode.G then
+                table.insert(counters, c)
+            end
+        end
+        combo = counters[math.random(1, #counters)]
+    else
+        combo = AllCombos[State.comboIndex]
+        State.comboIndex = State.comboIndex % #AllCombos + 1
+    end
 
     for i, key in ipairs(combo) do
-        Press(key, 0.026)
-        if i < #combo then task.wait(0.038) end
+        Press(key, 0.024)
+        if i < #combo then task.wait(0.036) end
     end
 end
 
-local function DoParryAndCounter()
-    if tick() - State.lastParry < 0.27 then return end
+local function DoParry()
+    if tick() - State.lastParry < 0.28 then return end
     State.lastParry = tick()
 
-    -- Bloqueo
     pcall(function()
         VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
-        task.wait(0.022)
+        task.wait(0.02)
         VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
     end)
-    Press(Enum.KeyCode.R, 0.022)
+    Press(Enum.KeyCode.R, 0.02)
 
-    -- Activar contraataque
     State.isCountering = true
     State.lastCounter = tick()
 end
 
 local function ProcessCounter()
     if not State.isCountering then return end
-    if tick() - State.lastCounter > 0.50 then
+    if tick() - State.lastCounter > 0.48 then
         State.isCountering = false
         return
     end
-
     State.isCountering = false
     State.lastAttack = 0
-    ExecuteCombo("counter")
+    DoCombo(true) -- contraataque
 end
 
--- ==================== CEREBRO FULL AUTO ====================
+-- ==================== FULL AUTO ====================
 
 RunService.Heartbeat:Connect(function()
     if not Settings.FullAuto then return end
@@ -301,105 +332,76 @@ RunService.Heartbeat:Connect(function()
     local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
     if not myRoot or not myHum or myHum.Health <= 0 then return end
 
-    local enemies = GetValidEnemies()
+    local enemies = GetEnemies()
     if #enemies == 0 then
         myHum:Move(Vector3.zero, false)
-        State.mode = "idle"
         return
     end
 
-    local nearest = enemies[1]
-    local dist = nearest.dist
-    local nearbyCount = 0
+    local target = enemies[1]
+    local dist = target.dist
+    local group = 0
     for _, e in ipairs(enemies) do
-        if e.dist <= 16 then nearbyCount += 1 end
+        if e.dist <= 15 then group += 1 end
     end
 
-    -- Decidir modo
-    if nearbyCount >= 2 then
-        State.mode = "group"
-    elseif dist > Settings.OptimalRange + 3 then
-        State.mode = "chase"
-    elseif dist < 7.5 then
-        State.mode = "too_close"
+    SoftFace(target.root.Position)
+
+    -- Caminar cuando está lejos
+    if dist > Settings.WeaponRange + 1.5 and dist < Settings.ChaseRange then
+        WalkTo(target.root.Position, 1.35)
+    elseif dist < 7.2 then
+        -- Muy cerca → strafe para no quedar pegado
+        Strafe(target.root.Position)
+    elseif dist > Settings.OptimalRange + 1.8 and dist <= Settings.WeaponRange + 1 then
+        WalkTo(target.root.Position, 0.85)
     else
-        State.mode = "fight"
+        myHum:Move(Vector3.zero, false)
     end
 
-    -- Siempre mirar al objetivo principal
-    SoftFace(nearest.root.Position)
-
-    -- === COMPORTAMIENTO SEGÚN MODO ===
-
-    if State.mode == "chase" then
-        MoveToward(nearest.root.Position, 1.45)
-        if dist <= Settings.MeleeRange + 2 then
-            ExecuteCombo("normal")
-        end
-
-    elseif State.mode == "fight" then
-        -- Rango ideal → presionar con combos y strafear ligeramente
-        if dist > Settings.OptimalRange + 1.2 then
-            MoveToward(nearest.root.Position, 0.9)
-        elseif dist < Settings.OptimalRange - 1.5 then
-            Strafe(nearest.root.Position)
-        else
-            myHum:Move(Vector3.zero, false)
-        end
-        ExecuteCombo("normal")
-        if dist <= 11 then
-            DoParryAndCounter()
+    -- SOLO atacar si está dentro del rango real del arma
+    if dist <= Settings.WeaponRange then
+        if group >= 2 then
+            DoCombo(false)
+            DoParry()
             ProcessCounter()
-        end
-
-    elseif State.mode == "too_close" then
-        -- Demasiado pegado → salir + contra
-        Strafe(nearest.root.Position)
-        DoParryAndCounter()
-        ProcessCounter()
-        ExecuteCombo("aggressive")
-
-    elseif State.mode == "group" then
-        -- Varios enemigos → máxima agresividad
-        SoftFace(nearest.root.Position)
-        if dist > 10 then
-            MoveToward(nearest.root.Position, 1.3)
+            if tick() - State.lastDisplace > 1.2 then
+                State.lastDisplace = tick()
+                Press(Enum.KeyCode.G, 0.03)
+            end
         else
-            Strafe(nearest.root.Position)
-        end
-        ExecuteCombo("group")
-        DoParryAndCounter()
-        ProcessCounter()
-        -- Displace más frecuente en grupo
-        if tick() - State.lastDisplace > 1.1 then
-            State.lastDisplace = tick()
-            Press(Enum.KeyCode.G, 0.03)
+            DoCombo(false)
+            if dist <= 10.5 then
+                DoParry()
+                ProcessCounter()
+            end
         end
     end
 end)
 
--- Melee Aura simple (si no está en Full Auto)
+-- Melee Aura (solo en rango)
 RunService.Heartbeat:Connect(function()
     if Settings.FullAuto or not Settings.MeleeAura then return end
-    local enemies = GetValidEnemies()
-    if #enemies > 0 and enemies[1].dist <= 12.5 then
+    local enemies = GetEnemies()
+    if #enemies > 0 and enemies[1].dist <= Settings.WeaponRange then
         SoftFace(enemies[1].root.Position)
-        ExecuteCombo("normal")
+        DoCombo(false)
     end
 end)
 
 -- AIM
 RunService.RenderStepped:Connect(function()
     if not Settings.Aim then return end
-    local enemies = GetValidEnemies()
+    local enemies = GetEnemies()
     if #enemies == 0 then return end
     local part = enemies[1].char:FindFirstChild("Head") or enemies[1].root
     if part then
-        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, part.Position), 0.14)
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(Camera.CFrame.Position, part.Position), 0.13)
     end
 end)
 
-print("✅ Bug Fixes Full Auto Pilot v4 cargado")
-print("• Detección mejorada")
-print("• Juega prácticamente solo")
-print("• Lógica de combos avanzada (normal / agresivo / contra / grupo)")
+print("✅ Bug Fixes Full Auto v5")
+print("• Solo ataca dentro del rango del arma")
+print("• Caminar real en Full Auto")
+print("• Todas las combinaciones de combos")
+print("• Botón – para minimizar")
